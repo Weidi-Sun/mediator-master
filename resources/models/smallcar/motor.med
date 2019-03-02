@@ -1,0 +1,136 @@
+automaton WrestlingContract (Deposit1, Deposit2, withDraw1, withDraw2: out int, turnEnd1, turnEnd2: out int 0..1){
+    variables{
+    		player1Played,player2Played,gameFinished: int 0..1 init 0;
+    		player1Deposit,player2Deposit,gains: int init 0;
+    		_test_: int init 0;
+   	}
+    transitions {
+	        !Deposit1.reqRead && player1Played==0 && gameFinished==0 -> Deposit1.reqRead = true;
+	        !Deposit2.reqRead && player2Played==0 && gameFinished==0 -> Deposit2.reqRead = true;
+            (Deposit1.reqRead && Deposit1.reqWrite &&gameFinished==0) -> {
+                    sync Deposit1;
+                    player1Deposit = player1Deposit +Deposit1.value;
+                    player1Played = 1;
+            }
+            (Deposit2.reqRead && Deposit2.reqWrite &&gameFinished==0) -> {
+                                sync Deposit2;
+                                player2Deposit = player2Deposit+Deposit2.value;
+                                player2Played = 1;
+            }
+            (player1Played==1 && player2Played==1&&gameFinished==0) -> {
+                    if(player1Deposit > player2Deposit * 2&&player1Played==1 && player2Played==1) {
+                                 player1Played = 0;player2Played =0;
+                                 gains = player1Deposit + player2Deposit;
+                                 player1Deposit = 0;
+                                 player2Deposit = 0;
+                                 withDraw1.reqWrite = true;
+                                 withDraw2.reqWrite = true;
+                                 withDraw1.value = gains;
+                                 withDraw2.value = 0;
+                                 gameFinished = 1;
+                    }
+                    if(player2Deposit > player1Deposit * 2&&player1Played==1 && player2Played==1) {
+                                 player1Played = 0;player2Played =0;
+                                 gains = player1Deposit + player2Deposit;
+                                 player1Deposit = 0;
+                                 player2Deposit = 0;
+                                 withDraw1.reqWrite = true;
+                                 withDraw2.reqWrite = true;
+                                 withDraw2.value = gains;
+                                 withDraw1.value = 0;
+                                 gameFinished = 1;
+                    }
+                    if(player1Deposit <= (player2Deposit+1) * 2 && player1Deposit <= player2Deposit * 2&&player1Played==1 && player2Played==1) {
+                                 player1Played = 0;player2Played =0;
+                                 turnEnd1.reqWrite = true;
+                                 turnEnd2.reqWrite = true;
+                    }
+            }
+            turnEnd1.reqRead && turnEnd1.reqWrite && turnEnd2.reqRead && turnEnd2.reqWrite -> {sync turnEnd1;sync turnEnd2;}
+            withDraw1.reqRead && withDraw1.reqWrite&&withDraw2.reqRead && withDraw2.reqWrite -> {sync withDraw1;sync withDraw2;}
+   	 }
+}
+automaton <playernum: int, initial_capital: int > Player (Deposit: out int, withDraw: in int, decide: in int, decideMax: out int, turnEnd:in int 0..1){
+    variables{
+    		capital, decideNum: int init 0;
+    		initial: int 0..1 init 1;
+    		depositPrepared: int 0..1 init 0;
+   	}
+    transitions {
+            initial==1 -> {
+                    capital = initial_capital;
+                    initial = 0;
+                    decideMax.reqWrite = true;
+                    withDraw.reqRead = true;
+            }
+            (decide.reqRead == false && decide.reqWrite == false)&&(decideMax.reqWrite == true && decideMax.reqRead == true) ->{
+                    decideMax.value = capital;
+                    sync decideMax;
+                    decide.reqRead = true;
+            }
+            (decide.reqRead == true && decide.reqWrite == true)->{
+                    sync decide;
+                    decideNum = decide.value;
+                    depositPrepared = 1;
+            }
+            depositPrepared==1 ->{
+                    depositPrepared = 0;
+                    Deposit.value = decideNum;
+                    capital = capital - decideNum;
+                    turnEnd.reqRead = true;
+                    Deposit.reqWrite = true;
+            }
+            (Deposit.reqRead == true && Deposit.reqWrite == true)->{
+                    sync Deposit;
+            }
+            (turnEnd.reqWrite == true && turnEnd.reqRead == true) -> {
+                    sync turnEnd;
+                    decideMax.value = capital;
+                    decideMax.reqWrite = true;
+            }
+            (withDraw.reqRead == true && withDraw.reqWrite == true) -> {
+                    sync withDraw;
+                    capital = capital + withDraw.value;
+            }
+
+   	 }
+}
+automaton <playernum: int> playerDecide (decideMax: in int, decide: out int){
+    variables{
+    		max: int init 0;
+    		maxPrepared: int 0..1 init 0;
+    		decidenum: int init 0;
+   	}
+    transitions {
+            (decide.reqRead == false && decide.reqWrite == false && decideMax.reqRead == false && decideMax.reqWrite == true) -> decideMax.reqRead = true;
+            decideMax.reqRead && decideMax.reqWrite -> {
+                    sync decideMax;
+                    max = decideMax.value;
+                    maxPrepared = 1;
+                    decidenum = 0;
+            }
+            group{
+
+                    maxPrepared==1 && (decidenum < max) ->{
+                           decidenum = decidenum + 1;
+                    }
+                    maxPrepared==1 ->{
+                           maxPrepared = 0;
+                           decide.value = decidenum;
+                           decide.reqWrite = true;
+                    }
+            }
+            decide.reqWrite &&decide.reqRead -> sync decide;
+   	 }
+}
+system test (){
+    components {
+            playerDecide1 : playerDecide<1>;
+            playerDecide2 : playerDecide<2>;
+            Contract : WrestlingContract;
+    }
+    connections {
+            Player<1, 10>(Contract.Deposit1, Contract.withDraw1, playerDecide1.decide, playerDecide1.decideMax, Contract.turnEnd1);
+            Player<2, 10>(Contract.Deposit2, Contract.withDraw2, playerDecide2.decide, playerDecide2.decideMax, Contract.turnEnd2);
+    }
+}
